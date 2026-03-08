@@ -1039,49 +1039,116 @@ function runTillageAnalysis(){
 
   var geom = state.lastGeom;
   buildProxiesForField(geom, function(){
-  var reducerParams = {reducer: ee.Reducer.mean(), geometry: geom, scale: 20, tileScale: 4, maxPixels: 1e9, bestEffort: true};
-  var tillageBands = ['reduced_till_likelihood_proxy', 'intensive_till_likelihood_proxy', 'spring_bare_freq', 'spring_ndti_med'];
-  if (sarToggle.getValue()) { tillageBands.push('sar_reduced_score_mean'); }
-  var statsDict = state.mgmtProxyImage.select(tillageBands).reduceRegion(reducerParams);
+    var reducerParams = {reducer: ee.Reducer.mean(), geometry: geom, scale: 20, tileScale: 4, maxPixels: 1e9, bestEffort: true};
 
-  statusLabel.setValue('Running tillage analysis...');
-  statsDict.evaluate(function(stats, error){
-    if (error || !stats){
-      statusLabel.setValue('Tillage analysis failed.');
-      addAnalysisPanel('Tillage Detection', ['Unable to compute tillage proxy stats for this field.']);
-      return;
-    }
+    // ── Aggregate bands (Part 1 — classification) ──
+    var tillageBands = ['reduced_till_likelihood_proxy', 'intensive_till_likelihood_proxy', 'spring_bare_freq', 'spring_ndti_med'];
+    if (sarToggle.getValue()) { tillageBands.push('sar_reduced_score_mean'); }
+    var aggStats = state.mgmtProxyImage.select(tillageBands).reduceRegion(reducerParams);
 
-    var reduced = Number(stats.reduced_till_likelihood_proxy);
-    var intensive = Number(stats.intensive_till_likelihood_proxy);
-    var springBare = Number(stats.spring_bare_freq);
-    var springNdti = Number(stats.spring_ndti_med);
-    var margin = reduced - intensive;
+    // ── Per-year spring_ndti bands (Part 2 — event history) ──
+    var years = state.mgmtYears || [];
+    var ndtiBands = years.map(function(y){ return 'spring_ndti_' + y; });
+    var yearlyStats = state.annualMgmtImage.select(ndtiBands).reduceRegion(reducerParams);
 
-    var klass = 'uncertain';
-    if (margin > TILL_REDUCED_MARGIN()) { klass = 'likely_reduced'; }
-    else if (margin < -TILL_INTENSIVE_MARGIN()) { klass = 'likely_intensive'; }
+    statusLabel.setValue('Running tillage analysis…');
 
-    var confidencePct = Math.min(99, Math.round((Math.abs(margin) / 0.5) * 100));
-    var lines = [
-      'Class: ' + klass,
-      'Margin (reduced - intensive): ' + proxyFmt(margin, 3),
-      'Confidence: ' + confidencePct + '%',
-      'reduced_till_likelihood_proxy: ' + proxyFmt(reduced, 3),
-      'intensive_till_likelihood_proxy: ' + proxyFmt(intensive, 3),
-      'spring_bare_freq: ' + proxyFmt(springBare, 3) + ' | spring_ndti_med: ' + proxyFmt(springNdti, 3)
-    ];
-    if (sarToggle.getValue()) {
-      lines.push('S1 SAR metrics blended (weight=' + SAR_BLEND_WEIGHT + '), sar_reduced_score_mean=' + proxyFmt(stats.sar_reduced_score_mean, 3));
-    } else {
-      lines.push('S1 SAR metrics not enabled.');
-    }
+    aggStats.evaluate(function(agg, err1){
+      if (err1 || !agg){
+        statusLabel.setValue('Tillage analysis failed.');
+        addAnalysisPanel('Tillage Detection', ['Unable to compute tillage proxy stats for this field.']);
+        return;
+      }
 
-    lines.push('Thresholds: reduced_margin>' + proxyFmt(TILL_REDUCED_MARGIN(),2) +
-      ' | intensive_margin>' + proxyFmt(TILL_INTENSIVE_MARGIN(),2));
-    addAnalysisPanel('Tillage Detection', lines);
-    statusLabel.setValue('Tillage analysis complete.');
-  });
+      yearlyStats.evaluate(function(yearly){
+        // ── Part 1: USDA classification from multi-year NDTI ──
+        var springNdtiMed = Number(agg.spring_ndti_med);
+        // Normalise NDTI [-0.2, 0.4] → [0=tilled, 1=residue], same as proxy formula
+        var ndtiNorm = Math.min(1, Math.max(0, (springNdtiMed + 0.2) / 0.6));
+
+        var usdaClass, classDesc;
+        if (ndtiNorm >= 0.60) {
+          usdaClass = 'NO-TILL';        classDesc = '>60% residue cover';
+        } else if (ndtiNorm >= 0.30) {
+          usdaClass = 'REDUCED TILL';   classDesc = '15–60% residue cover';
+        } else {
+          usdaClass = 'INTENSIVE TILL'; classDesc = '<15% residue cover';
+        }
+        var residueEst = Math.round(ndtiNorm * 100);
+
+        var reduced   = Number(agg.reduced_till_likelihood_proxy);
+        var intensive = Number(agg.intensive_till_likelihood_proxy);
+        var margin    = reduced - intensive;
+        var confidencePct = Math.min(99, Math.round((Math.abs(ndtiNorm - 0.45) / 0.45) * 100));
+
+        var lines = [
+          '── PART 1: USDA TILLAGE CLASSIFICATION ──',
+          'Class: ' + usdaClass,
+          'Residue cover estimate: ~' + residueEst + '%  (' + classDesc + ')',
+          'Multi-yr spring NDTI (median): ' + proxyFmt(springNdtiMed, 3) +
+            '  →  norm: ' + proxyFmt(ndtiNorm, 2) + '/1.00',
+          'Reduced proxy: ' + proxyFmt(reduced, 3) +
+            '  |  Intensive proxy: ' + proxyFmt(intensive, 3),
+          'Margin: ' + proxyFmt(margin, 3) + '  |  Confidence: ' + confidencePct + '%',
+          'Thresholds: No-till NDTI_norm≥0.60 | Reduced ≥0.30 | Intensive <0.30'
+        ];
+        if (sarToggle.getValue()) {
+          lines.push('SAR blended (weight=' + SAR_BLEND_WEIGHT + ')' +
+            (agg.sar_reduced_score_mean !== undefined ? '  sar_score=' + proxyFmt(agg.sar_reduced_score_mean, 3) : ''));
+        }
+
+        // ── Part 2: year-by-year tillage event history ──
+        lines.push('');
+        lines.push('── PART 2: TILLAGE EVENT HISTORY ──');
+        lines.push('Year  Spring NDTI  Residue%  Event Likelihood    Intensity');
+        lines.push('────  ───────────  ────────  ──────────────────  ─────────');
+
+        var EVENT_THRESHOLD = 0.35;  // ndti_norm: below = likely event
+        var eventYears = [];
+
+        years.forEach(function(yr){
+          var band = 'spring_ndti_' + yr;
+          if (!yearly || yearly[band] === null || yearly[band] === undefined){
+            lines.push(yr + '  no data');
+            return;
+          }
+          var yrNdti = Number(yearly[band]);
+          var yrNorm = Math.min(1, Math.max(0, (yrNdti + 0.2) / 0.6));
+          var resEst = Math.round(yrNorm * 100);
+
+          var eventLabel, intensLabel;
+          if (yrNorm >= 0.60) {
+            eventLabel = 'no event';          intensLabel = '—';
+          } else if (yrNorm >= EVENT_THRESHOLD) {
+            eventLabel = 'possible event';    intensLabel = 'light';
+            eventYears.push(yr);
+          } else if (yrNorm >= 0.15) {
+            eventLabel = 'LIKELY EVENT';      intensLabel = 'moderate';
+            eventYears.push(yr);
+          } else {
+            eventLabel = 'LIKELY EVENT';      intensLabel = 'heavy';
+            eventYears.push(yr);
+          }
+
+          // padded columns
+          var yrS  = String(yr);
+          var ndtiS = proxyFmt(yrNdti, 3);
+          var resS  = resEst + '%';
+          lines.push(yrS + '  ' + ndtiS + '        ' + resS + '      ' + eventLabel + '   ' + intensLabel);
+        });
+
+        lines.push('');
+        if (eventYears.length === 0){
+          lines.push('Summary: No tillage events detected (' + years.length + ' years of data)');
+        } else {
+          lines.push('Summary: ' + eventYears.length + ' event year(s) detected: ' + eventYears.join(', '));
+        }
+        lines.push('(Event threshold: NDTI_norm < ' + EVENT_THRESHOLD + ')');
+
+        addAnalysisPanel('Tillage Detection', lines);
+        statusLabel.setValue('Tillage analysis complete.');
+      });
+    });
   }); // end buildProxiesForField
 }
 
