@@ -24,6 +24,7 @@ var state = {
   mgmtProxyImage: null,
   annualMgmtImage: null,
   mgmtYears: [],
+  lastMgmtGeomHash: null,
   showCoverLayer: false,
   showTillageLayer: false,
   cdlYearUsed: null
@@ -62,8 +63,8 @@ uiPanel.add(ui.Label('Field Analytics — On-Demand (S2 + S1 + MODIS + CDL) + Co
   fontWeight:'bold', fontSize:'16px'
 }));
 
-var startBox   = ui.Textbox({placeholder:'YYYY-MM-DD', value:'2025-02-01', style:{width:'140px'}});
-var endBox     = ui.Textbox({placeholder:'YYYY-MM-DD', value:'2025-07-01', style:{width:'140px'}});
+var startBox   = ui.Textbox({placeholder:'YYYY-MM-DD', value:'2024-09-01', style:{width:'140px'}});
+var endBox     = ui.Textbox({placeholder:'YYYY-MM-DD', value:'2025-06-30', style:{width:'140px'}});
 var cloudSlide = ui.Slider({min:0,max:100,value:90,step:1,style:{stretch:'horizontal'}});
 var sarToggle  = ui.Checkbox({label:'Include Sentinel-1 SAR (VV, VH, VH/VV)', value:false});
 var minValidPct= ui.Slider({min:0,max:100,value:20,step:5,style:{width:'160px'}});
@@ -78,7 +79,7 @@ uiPanel.add(ui.Panel(
 
 /* Field search controls */
 var searchRow = ui.Panel({layout:ui.Panel.Layout.flow('horizontal')});
-var searchBox = ui.Textbox({placeholder:'Enter poly_id (e.g., 69005)', style:{width:'200px'}});
+var searchBox = ui.Textbox({placeholder:'Enter poly_id (e.g., 68250)', value:'68250', style:{width:'200px'}});
 var searchBtn = ui.Button({label:'Find Field', style:{color:'blue'}});
 searchRow.add(ui.Label('Search:')).add(searchBox).add(searchBtn);
 uiPanel.add(searchRow);
@@ -255,18 +256,19 @@ function addBareMask(img){
   return img.addBands(bare);
 }
 
-function seasonalComposite(year, mmddStart, mmddEnd, bands){
+// geom: the single field geometry to scope this composite to (avoids full-AOI memory issues)
+function seasonalComposite(year, mmddStart, mmddEnd, bands, geom){
   var start = ee.Date.parse('YYYY-MM-dd', ee.String(year).cat('-').cat(mmddStart));
   var end = ee.Date.parse('YYYY-MM-dd', ee.String(year).cat('-').cat(mmddEnd)).advance(1, 'day');
   var comp = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterBounds(fields.geometry().bounds())
+    .filterBounds(geom)
     .filterDate(start, end)
     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloudSlide.getValue()))
     .map(maskS2clouds)
     .map(addIndices)
     .map(addBareMask)
     .median()
-    .clipToCollection(fields);
+    .clip(geom);
   return ee.Image(comp).select(bands);
 }
 function emptyBands(names){
@@ -316,10 +318,10 @@ function yearList(){
   return ee.List.sequence(2020, CDL_LAST);
 }
 
-function annualMgmtForYear(year, includeSar){
+function annualMgmtForYear(year, includeSar, geom){
   var y = ee.Number(year).int();
-  var fall = seasonalComposite(y, FALL_START, FALL_END, ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask']);
-  var spring = seasonalComposite(y, SPRING_START, SPRING_END, ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask']);
+  var fall = seasonalComposite(y, FALL_START, FALL_END, ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask'], geom);
+  var spring = seasonalComposite(y, SPRING_START, SPRING_END, ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask'], geom);
   var coverLikely = fall.select('NDVI').gt(0.30).or(spring.select('NDVI').gt(0.35)).rename('cover_crop_likely');
   var base = ee.Image.cat([
     coverLikely,
@@ -338,7 +340,7 @@ function annualMgmtForYear(year, includeSar){
   var start = ee.Date.parse('YYYY-MM-dd', y.format().cat('-').cat(SPRING_START));
   var end = ee.Date.parse('YYYY-MM-dd', y.format().cat('-').cat(SPRING_END)).advance(1, 'day');
   var s1 = ee.ImageCollection('COPERNICUS/S1_GRD')
-    .filterBounds(fields.geometry().bounds())
+    .filterBounds(geom)
     .filterDate(start, end)
     .filter(ee.Filter.eq('instrumentMode','IW'))
     .filter(ee.Filter.eq('resolution_meters',10))
@@ -357,11 +359,11 @@ function annualMgmtForYear(year, includeSar){
   return base.addBands([vvDb, vhDb, vhvv, vvContrast, vvEntropy, sarReduced]);
 }
 
-function buildAnnualMgmtBandImage(years, includeSar){
+function buildAnnualMgmtBandImage(years, includeSar, geom){
   var out = ee.Image(ee.List(years).iterate(function(y, prev){
     y = ee.Number(y).int();
     var suffix = ee.String('_').cat(y.format());
-    var annual = annualMgmtForYear(y, includeSar);
+    var annual = annualMgmtForYear(y, includeSar, geom);
     var renamed = ee.Image.cat([
       annual.select('cover_crop_likely').rename(ee.String('cover_crop_likely').cat(suffix)),
       annual.select('fall_ndvi').rename(ee.String('fall_ndvi').cat(suffix)),
@@ -373,12 +375,12 @@ function buildAnnualMgmtBandImage(years, includeSar){
     ]);
     return ee.Image(prev).addBands(renamed);
   }, ee.Image([])));
-  return out.clipToCollection(fields);
+  return out.clip(geom);
 }
 
-function buildMgmtProxyImage(years, includeSar){
+function buildMgmtProxyImage(years, includeSar, geom){
   var annualCollection = ee.ImageCollection(ee.List(years).map(function(y){
-    return annualMgmtForYear(ee.Number(y).int(), includeSar).set('year', ee.Number(y).int());
+    return annualMgmtForYear(ee.Number(y).int(), includeSar, geom).set('year', ee.Number(y).int());
   }));
 
   var coverCropFreq = annualCollection.select('cover_crop_likely').mean().rename('cover_crop_freq_proxy');
@@ -409,7 +411,7 @@ function buildMgmtProxyImage(years, includeSar){
       reducedTill,
       intensiveTill,
       sarReduced
-    ]).clipToCollection(fields);
+    ]).clip(geom);
   }
 
   return ee.Image.cat([
@@ -422,7 +424,7 @@ function buildMgmtProxyImage(years, includeSar){
     springBsiMed,
     reducedTill,
     intensiveTill
-  ]).clipToCollection(fields);
+  ]).clip(geom);
 }
 
 /* ======================================================================================
@@ -788,11 +790,13 @@ function update(){
     .filter(ee.Filter.listContains('transmitterReceiverPolarisation','VV'))
     .filter(ee.Filter.listContains('transmitterReceiverPolarisation','VH')) : null;
 
+  // Store years list; proxy images are built lazily on first field click to avoid full-AOI memory issues
   var yearsClient = [];
   for (var y = 2020; y <= CDL_LAST; y++) { yearsClient.push(y); }
   state.mgmtYears = yearsClient;
-  state.annualMgmtImage = buildAnnualMgmtBandImage(ee.List(yearsClient), sarToggle.getValue());
-  state.mgmtProxyImage = buildMgmtProxyImage(ee.List(yearsClient), sarToggle.getValue());
+  state.mgmtProxyImage = null;
+  state.annualMgmtImage = null;
+  state.lastMgmtGeomHash = null;
   state.showCoverLayer = false;
   state.showTillageLayer = false;
 
@@ -886,11 +890,28 @@ function addAnalysisPanel(title, lines){
   }
 }
 
+function buildProxiesForField(geom, onDone){
+  // Build proxy images scoped to a single field geometry, with simple caching
+  var geomStr = JSON.stringify(geom.bounds(ee.ErrorMargin(1)).getInfo());
+  if (state.lastMgmtGeomHash === geomStr && state.mgmtProxyImage && state.annualMgmtImage){
+    onDone();
+    return;
+  }
+  statusLabel.setValue('Building management proxy (first time for this field, ~30s)…');
+  var years = ee.List(state.mgmtYears);
+  var includeSar = sarToggle.getValue();
+  state.mgmtProxyImage = buildMgmtProxyImage(years, includeSar, geom);
+  state.annualMgmtImage = buildAnnualMgmtBandImage(years, includeSar, geom);
+  state.lastMgmtGeomHash = geomStr;
+  onDone();
+}
+
 function runCoverCropAnalysis(){
   if (!state.lastGeom){ statusLabel.setValue('Click a field first.'); return; }
-  if (!state.mgmtProxyImage || !state.annualMgmtImage){ statusLabel.setValue('Run / Update first.'); return; }
+  if (!state.s2Base){ statusLabel.setValue('Run / Update first.'); return; }
 
   var geom = state.lastGeom;
+  buildProxiesForField(geom, function(){
   var reducerParams = {reducer: ee.Reducer.mean(), geometry: geom, scale: 20, tileScale: 4, maxPixels: 1e9, bestEffort: true};
   var proxyStats = state.mgmtProxyImage.select([
     'cover_crop_freq_proxy',
@@ -939,13 +960,15 @@ function runCoverCropAnalysis(){
     ]);
     statusLabel.setValue('Cover crop analysis complete.');
   });
+  }); // end buildProxiesForField
 }
 
 function runTillageAnalysis(){
   if (!state.lastGeom){ statusLabel.setValue('Click a field first.'); return; }
-  if (!state.mgmtProxyImage){ statusLabel.setValue('Run / Update first.'); return; }
+  if (!state.s2Base){ statusLabel.setValue('Run / Update first.'); return; }
 
   var geom = state.lastGeom;
+  buildProxiesForField(geom, function(){
   var reducerParams = {reducer: ee.Reducer.mean(), geometry: geom, scale: 20, tileScale: 4, maxPixels: 1e9, bestEffort: true};
   var tillageBands = ['reduced_till_likelihood_proxy', 'intensive_till_likelihood_proxy', 'spring_bare_freq', 'spring_ndti_med'];
   if (sarToggle.getValue()) { tillageBands.push('sar_reduced_score_mean'); }
@@ -987,16 +1010,19 @@ function runTillageAnalysis(){
     addAnalysisPanel('Tillage Detection', lines);
     statusLabel.setValue('Tillage analysis complete.');
   });
+  }); // end buildProxiesForField
 }
 
 function toggleCoverProxyLayer(){
-  if (!state.mgmtProxyImage){ statusLabel.setValue('Run / Update first.'); return; }
+  if (!state.lastGeom){ statusLabel.setValue('Click a field first.'); return; }
+  if (!state.s2Base){ statusLabel.setValue('Run / Update first.'); return; }
   var name = 'Cover Crop Frequency Proxy';
   if (state.showCoverLayer){
     removeLayerByName(name);
     state.showCoverLayer = false;
     return;
   }
+  buildProxiesForField(state.lastGeom, function(){
   Map.addLayer(
     state.mgmtProxyImage.select('cover_crop_freq_proxy'),
     {min:0, max:1, palette:['8c510a','f6e8c3','c7eae5','01665e']},
@@ -1005,16 +1031,19 @@ function toggleCoverProxyLayer(){
     0.85
   );
   state.showCoverLayer = true;
+  }); // end buildProxiesForField
 }
 
 function toggleTillageProxyLayer(){
-  if (!state.mgmtProxyImage){ statusLabel.setValue('Run / Update first.'); return; }
+  if (!state.lastGeom){ statusLabel.setValue('Click a field first.'); return; }
+  if (!state.s2Base){ statusLabel.setValue('Run / Update first.'); return; }
   var name = 'Reduced Tillage Likelihood Proxy';
   if (state.showTillageLayer){
     removeLayerByName(name);
     state.showTillageLayer = false;
     return;
   }
+  buildProxiesForField(state.lastGeom, function(){
   Map.addLayer(
     state.mgmtProxyImage.select('reduced_till_likelihood_proxy'),
     {min:-0.5, max:0.7, palette:['8b0000','fdbb84','ffffbf','91bfdb','2166ac']},
@@ -1023,6 +1052,7 @@ function toggleTillageProxyLayer(){
     0.85
   );
   state.showTillageLayer = true;
+  }); // end buildProxiesForField
 }
 
 coverCropBtn.onClick(runCoverCropAnalysis);
