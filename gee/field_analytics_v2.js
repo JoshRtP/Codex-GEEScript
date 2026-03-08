@@ -197,9 +197,6 @@ var baseDimSlider   = ui.Slider({min:0,max:1,value:0.3,step:0.05,style:{width:'1
 uiPanel.add(ui.Panel([addOverlayBtn, clearOverlayBtn], ui.Panel.Layout.flow('horizontal')));
 advPanel.add(ui.Panel([ui.Label('Basemap dim'), baseDimSlider], ui.Panel.Layout.flow('horizontal')));
 
-// UI width also accessible here (mirrors the top slider)
-advPanel.add(ui.Panel([ui.Label('UI width (px)'), uiWidthSlider], ui.Panel.Layout.flow('horizontal')));
-
 /* Photo overlay controls */
 var photoSourceSel = ui.Select({
   items: ['S2 → NAIP → Landsat', 'NAIP → Landsat', 'Landsat → NAIP'],
