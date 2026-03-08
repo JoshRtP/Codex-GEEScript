@@ -28,18 +28,29 @@ var SPRING_END   = '05-15';
 var MAX_CLOUD_PCT = 30;
 
 // ── Load the single field ────────────────────────────────────────────────────
-var fields = ee.FeatureCollection(FIELD_ASSET).map(function(f){
-  var pid = f.get('poly_id');
-  // fall back to 'fid' or 'id' if poly_id is absent in your schema
-  return f.set('poly_id', ee.Algorithms.If(pid, pid, f.get('fid')));
-});
+// Use FeatureCollection.geometry() instead of .first().geometry() to avoid
+// null-feature errors when the filter returns an empty collection.
+var raw = ee.FeatureCollection(FIELD_ASSET);
+var targetFC = raw.filter(ee.Filter.eq('poly_id', TARGET_PID));
+var geom = targetFC.geometry();  // union of matched features — never null
 
-var targetField = fields.filter(ee.Filter.eq('poly_id', TARGET_PID)).first();
-var geom = ee.Feature(targetField).geometry();
+// ── Diagnostic: verify the field was actually found ──────────────────────────
+raw.first().propertyNames().evaluate(function(names){
+  print('Asset property names:', names);
+});
+targetFC.size().evaluate(function(n){
+  if (n === 0){
+    print('WARNING: No feature found with poly_id =', TARGET_PID);
+    print('Printing 3 sample features so you can verify the correct property name / value type:');
+    raw.limit(3).evaluate(function(fc){ print(fc); });
+  } else {
+    print('Found', n, 'feature(s) with poly_id =', TARGET_PID, '✓');
+  }
+});
 
 // Centre the map on the field
 Map.centerObject(geom, 15);
-Map.addLayer(geom, {color: 'cyan'}, 'Field ' + TARGET_PID);
+Map.addLayer(targetFC, {color: 'cyan'}, 'Field ' + TARGET_PID);
 
 // ── Index helpers ────────────────────────────────────────────────────────────
 function maskS2(img){
