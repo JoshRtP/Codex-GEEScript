@@ -28,29 +28,34 @@ var SPRING_END   = '05-15';
 var MAX_CLOUD_PCT = 30;
 
 // ── Load the single field ────────────────────────────────────────────────────
-// Use FeatureCollection.geometry() instead of .first().geometry() to avoid
-// null-feature errors when the filter returns an empty collection.
+// Filter tries both numeric and string forms of TARGET_PID because GEE assets
+// sometimes store IDs as strings even when they look like numbers.
 var raw = ee.FeatureCollection(FIELD_ASSET);
-var targetFC = raw.filter(ee.Filter.eq('poly_id', TARGET_PID));
-var geom = targetFC.geometry();  // union of matched features — never null
+var targetFC = raw.filter(
+  ee.Filter.or(
+    ee.Filter.eq('poly_id', TARGET_PID),
+    ee.Filter.eq('poly_id', String(TARGET_PID))
+  )
+);
+var geom = targetFC.geometry();
 
-// ── Diagnostic: verify the field was actually found ──────────────────────────
+// ── Diagnostic: print properties and confirm match ───────────────────────────
 raw.first().propertyNames().evaluate(function(names){
   print('Asset property names:', names);
 });
 targetFC.size().evaluate(function(n){
   if (n === 0){
-    print('WARNING: No feature found with poly_id =', TARGET_PID);
-    print('Printing 3 sample features so you can verify the correct property name / value type:');
+    print('WARNING: No feature matched poly_id =', TARGET_PID,
+          '(tried number and string). Showing 3 sample features to check property name/type:');
     raw.limit(3).evaluate(function(fc){ print(fc); });
   } else {
     print('Found', n, 'feature(s) with poly_id =', TARGET_PID, '✓');
   }
 });
 
-// Centre the map on the field
+// Centre map and highlight the field
 Map.centerObject(geom, 15);
-Map.addLayer(targetFC, {color: 'cyan'}, 'Field ' + TARGET_PID);
+Map.addLayer(targetFC.style({color:'cyan', width:2, fillColor:'00000000'}), {}, 'Field ' + TARGET_PID);
 
 // ── Index helpers ────────────────────────────────────────────────────────────
 function maskS2(img){
@@ -142,6 +147,7 @@ PROXY_YEARS.forEach(function(yr){
 
   // Print fall result
   fall.stats.evaluate(function(d){
+    if (!d){ print('▶ ' + yr + ' FALL  — no data (check field filter / cloud cover)'); return; }
     print('▶ ' + yr + ' FALL  (' + FALL_START + '→' + FALL_END + ')  images=' + d.imageCount,
           '  NDVI=' + num(d.NDVI_mean) +
           '  NDTI=' + num(d.NDTI_mean) + ' [' + num(d.NDTI_min) + ',' + num(d.NDTI_max) + ']' +
@@ -151,6 +157,7 @@ PROXY_YEARS.forEach(function(yr){
 
   // Print spring result
   spring.stats.evaluate(function(d){
+    if (!d){ print('▶ ' + yr + ' SPRING — no data (check field filter / cloud cover)'); return; }
     print('▶ ' + yr + ' SPRING(' + SPRING_START + '→' + SPRING_END + ')  images=' + d.imageCount,
           '  NDVI=' + num(d.NDVI_mean) +
           '  NDTI=' + num(d.NDTI_mean) + ' [' + num(d.NDTI_min) + ',' + num(d.NDTI_max) + ']' +
