@@ -436,13 +436,25 @@ function buildMgmtProxyImage(years, includeSar, geom){
   var springBareFreq = annualCollection.select('spring_bare_mask').mean().rename('spring_bare_freq');
   var springNdtiMed = annualCollection.select('spring_ndti').median().rename('spring_ndti_med');
   var springBsiMed = annualCollection.select('spring_bsi').median().rename('spring_bsi_med');
-  var reducedTill = springNdtiMed.subtract(springBareFreq).rename('reduced_till_likelihood_proxy');
-  var intensiveTill = springBareFreq.add(springBsiMed).subtract(springNdtiMed).rename('intensive_till_likelihood_proxy');
+
+  // Tillage proxy: NDTI is the primary discriminator.
+  // bare_frac is ~1 for ALL fields in Feb-May (crops haven't emerged), so it cannot
+  // distinguish tilled from residue-covered soil.  NDTI can:
+  //   NDTI > ~0.15  → retained residue → no-till / reduced till
+  //   NDTI < ~0.05  → dark bare soil  → intensive till
+  // Normalize NDTI from [-0.2, 0.4] to [0=tilled, 1=residue], gate by bare_freq
+  // so pixels with standing green crops don't inject spurious signal.
+  var ndtiNorm = springNdtiMed.unitScale(-0.2, 0.4).max(0).min(1);
+  var reducedTill   = ndtiNorm.multiply(springBareFreq).rename('reduced_till_likelihood_proxy');
+  var intensiveTill = ee.Image(1).subtract(ndtiNorm).multiply(springBareFreq).rename('intensive_till_likelihood_proxy');
 
   if (includeSar){
     var sarReduced = annualCollection.select('sar_reduced_score').mean().rename('sar_reduced_score_mean');
     reducedTill = reducedTill.multiply(1 - SAR_BLEND_WEIGHT).add(sarReduced.multiply(SAR_BLEND_WEIGHT)).rename('reduced_till_likelihood_proxy');
-    intensiveTill = springBareFreq.add(springBsiMed).subtract(reducedTill).rename('intensive_till_likelihood_proxy');
+    intensiveTill = ee.Image(1).subtract(ndtiNorm).multiply(springBareFreq)
+      .multiply(1 - SAR_BLEND_WEIGHT)
+      .add(ee.Image(1).subtract(sarReduced).multiply(springBareFreq).multiply(SAR_BLEND_WEIGHT))
+      .rename('intensive_till_likelihood_proxy');
     return ee.Image.cat([
       coverCropFreq,
       fallNdviMean,

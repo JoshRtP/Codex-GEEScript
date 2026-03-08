@@ -180,18 +180,24 @@ PROXY_YEARS.forEach(function(yr){
           '  BSI=' + num(d.BSI_mean) +
           '  bare_frac=' + num(d.bare_frac));
 
-    // 2024 spring: compute proxy scores the same way v2 does
+    // 2024 spring: replicate the CORRECTED v2 proxy formula
     if (yr === 2024){
-      var reduced   = d.NDTI_mean - d.bare_frac;
-      var intensive = d.bare_frac + d.BSI_mean - d.NDTI_mean;
+      // NOTE: bare_frac ≈ 0.97 for nearly all Midwest fields in Feb-May — crops haven't
+      // emerged yet.  It cannot tell tilled from residue-covered, so the OLD formula
+      // (NDTI - bare_frac) was always ≈ -0.75 regardless of management.
+      // NEW formula: normalise NDTI to [0=tilled, 1=residue], gate by bare_frac.
+      var ndtiNorm = Math.min(1, Math.max(0, (d.NDTI_mean - (-0.2)) / (0.4 - (-0.2))));
+      var reduced   = ndtiNorm * d.bare_frac;
+      var intensive = (1 - ndtiNorm) * d.bare_frac;
       var margin    = reduced - intensive;
 
-      print('  ── 2024 Proxy Scores ──');
-      print('  reduced_till_proxy  = NDTI_mean - bare_frac  = ' + num(reduced));
-      print('  intensive_till_proxy= bare_frac + BSI - NDTI  = ' + num(intensive));
-      print('  margin (reduced-intensive)                    = ' + num(margin));
-      if      (margin >  0.15) { print('  → Classification: LIKELY REDUCED TILL'); }
-      else if (margin < -0.15) { print('  → Classification: LIKELY INTENSIVE TILL  ← if wrong, adjust thresholds or window'); }
+      print('  ── 2024 Proxy Scores (NDTI-normalised formula) ──');
+      print('  ndti_norm = (NDTI+0.2)/0.6 clamped [0,1] = ' + num(ndtiNorm));
+      print('  reduced_till_proxy   = ndti_norm × bare_frac   = ' + num(reduced));
+      print('  intensive_till_proxy = (1-ndti_norm) × bare_frac = ' + num(intensive));
+      print('  margin (reduced-intensive)                       = ' + num(margin));
+      if      (margin >  0.15) { print('  → Classification: LIKELY REDUCED TILL ✓'); }
+      else if (margin < -0.15) { print('  → Classification: LIKELY INTENSIVE TILL'); }
       else                     { print('  → Classification: UNCERTAIN'); }
 
       print('  ── Cover Crop Check (spring NDVI) ──');
