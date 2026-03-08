@@ -25,3 +25,21 @@ This project is developed with [GitHub Copilot / Codex](https://github.com/featu
 
 - Google Earth Engine account
 - Access to relevant satellite datasets (e.g., Sentinel-2, Landsat)
+
+## Phase 1 Scripts (First Round)
+
+- `gee/field_analytics_v1_reference.js`: baseline reference script.
+- `gee/field_analytics_v2.js`: Phase 1 script with cover-crop and tillage proxy logic, button handlers, and proxy overlay toggles.
+- `python/phase1_pipeline_smoke.py`: local smoke test for pipeline wiring + GEE script contract checks.
+
+## Test Scripts
+
+- `tests/test_phase1_gee_contract.py`: validates required Phase 1 GEE logic markers and JavaScript parse validity.
+- `tests/test_phase1_pipeline_smoke.py`: runs the smoke pipeline script and checks report output.
+- `scripts/run_phase1_tests.ps1`: convenience runner for all Phase 1 tests.
+
+Run all tests:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_phase1_tests.ps1
+```
