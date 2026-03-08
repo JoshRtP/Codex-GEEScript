@@ -28,10 +28,26 @@ var SPRING_END   = '05-15';
 var MAX_CLOUD_PCT = 30;
 
 // ── Load the single field ────────────────────────────────────────────────────
-// Filter tries both numeric and string forms of TARGET_PID because GEE assets
-// sometimes store IDs as strings even when they look like numbers.
+// Mirror the choosePolyId() logic from field_analytics_v2.js:
+// the raw asset has no 'poly_id' — it lives under field_id / Field_ID / ID / id
+// or (if none of those exist) the system feature id.
 var raw = ee.FeatureCollection(FIELD_ASSET);
-var targetFC = raw.filter(
+
+function choosePolyId(f){
+  var names = f.propertyNames();
+  var pid = ee.Algorithms.If(names.contains('field_id'), f.get('field_id'),
+            ee.Algorithms.If(names.contains('Field_ID'),  f.get('Field_ID'),
+            ee.Algorithms.If(names.contains('ID'),        f.get('ID'),
+            ee.Algorithms.If(names.contains('id'),        f.get('id'),
+            f.id()))));
+  return ee.String(pid);
+}
+
+// Map poly_id onto the raw collection (same as the main script), then filter.
+var fields = raw.map(function(f){
+  return f.set('poly_id', choosePolyId(f));
+});
+var targetFC = fields.filter(
   ee.Filter.or(
     ee.Filter.eq('poly_id', TARGET_PID),
     ee.Filter.eq('poly_id', String(TARGET_PID))
@@ -41,12 +57,12 @@ var geom = targetFC.geometry();
 
 // ── Diagnostic: print properties and confirm match ───────────────────────────
 raw.first().propertyNames().evaluate(function(names){
-  print('Asset property names:', names);
+  print('Asset property names (raw):', names);
 });
 targetFC.size().evaluate(function(n){
   if (n === 0){
-    print('WARNING: No feature matched poly_id =', TARGET_PID,
-          '(tried number and string). Showing 3 sample features to check property name/type:');
+    print('WARNING: No feature matched poly_id =', TARGET_PID +
+          '. Showing 3 raw features to verify property names/values:');
     raw.limit(3).evaluate(function(fc){ print(fc); });
   } else {
     print('Found', n, 'feature(s) with poly_id =', TARGET_PID, '✓');
