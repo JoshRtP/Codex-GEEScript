@@ -1011,7 +1011,30 @@ function runCoverCropAnalysis(){
       (spring * COVER_SCORE_WEIGHTS.spring) +
       (ndviSum * COVER_SCORE_WEIGHTS.sum);
     var klass = scoreClass(score);
-    var confidencePct = confidenceFromMidpoint(score, 0.5);
+
+    // Confidence = how far the score is from the nearest class boundary,
+    // expressed as a % of the width of that class band.
+    //   likely:   boundary at 0.60, max = 1.00, width = 0.40
+    //   possible: boundaries at 0.35 and 0.60, width = 0.25 — midpoint at 0.475
+    //   unlikely: boundary at 0.35, min = 0.00, width = 0.35
+    var confidencePct;
+    if (klass === 'likely'){
+      confidencePct = Math.min(99, Math.round(((score - 0.60) / 0.40) * 100));
+    } else if (klass === 'possible') {
+      // distance from closer boundary, scaled to half-band width (0.125)
+      var distLo = score - 0.35;
+      var distHi = 0.60 - score;
+      confidencePct = Math.min(99, Math.round((Math.min(distLo, distHi) / 0.125) * 100));
+    } else {
+      confidencePct = Math.min(99, Math.round(((0.35 - score) / 0.35) * 100));
+    }
+    confidencePct = Math.max(1, confidencePct);
+
+    // Explain what each input contributed to the score
+    var freqContrib   = freq    * COVER_SCORE_WEIGHTS.freq;
+    var fallContrib   = fall    * COVER_SCORE_WEIGHTS.fall;
+    var springContrib = spring  * COVER_SCORE_WEIGHTS.spring;
+    var sumContrib    = ndviSum * COVER_SCORE_WEIGHTS.sum;
 
     var trend = (state.mgmtYears || []).map(function(y){
       var v = Number(stats['cover_crop_likely_' + y]);
@@ -1020,13 +1043,26 @@ function runCoverCropAnalysis(){
     }).join('');
 
     addAnalysisPanel('Cover Crop Analysis', [
-      'Class: ' + klass,
-      'Weighted score: ' + proxyFmt(score, 3),
-      'Confidence: ' + confidencePct + '%',
-      'cover_crop_freq_proxy: ' + proxyFmt(freq, 3),
-      'fall_ndvi_mean: ' + proxyFmt(fall, 3) + ' | spring_ndvi_mean: ' + proxyFmt(spring, 3),
-      'fall_spring_ndvi_sum_mean: ' + proxyFmt(ndviSum, 3),
-      'Trend (' + (state.mgmtYears || []).join(', ') + '): ' + trend
+      'Class: ' + klass + '  (score ' + proxyFmt(score, 3) + ')  Confidence: ' + confidencePct + '%',
+      '',
+      '── Score breakdown (higher = more cover crop signal) ──',
+      'freq_proxy  ×' + COVER_SCORE_WEIGHTS.freq + '  = ' + proxyFmt(freqContrib,3) +
+        '  (raw: ' + proxyFmt(freq,3) + '  — fraction of years with NDVI above threshold)',
+      'fall_ndvi   ×' + COVER_SCORE_WEIGHTS.fall + '  = ' + proxyFmt(fallContrib,3) +
+        '  (raw: ' + proxyFmt(fall,3) + '  — multi-yr avg fall NDVI)',
+      'spring_ndvi ×' + COVER_SCORE_WEIGHTS.spring + '  = ' + proxyFmt(springContrib,3) +
+        '  (raw: ' + proxyFmt(spring,3) + '  — multi-yr avg spring NDVI)',
+      'ndvi_sum    ×' + COVER_SCORE_WEIGHTS.sum + '  = ' + proxyFmt(sumContrib,3) +
+        '  (raw: ' + proxyFmt(ndviSum,3) + '  — fall+spring sum)',
+      'Total weighted score: ' + proxyFmt(score,3) +
+        '  (likely≥0.60 | possible≥0.35 | unlikely<0.35)',
+      '',
+      '── Confidence note ──',
+      'Confidence = distance from nearest class boundary / class width.',
+      'Low confidence = score near a boundary (ambiguous); high = well within class.',
+      '',
+      'Year-by-year (#=cover, .=none): ' + trend +
+        '  (' + (state.mgmtYears || []).join(', ') + ')'
     ]);
     statusLabel.setValue('Cover crop analysis complete.');
   });
