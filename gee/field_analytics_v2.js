@@ -108,6 +108,42 @@ var mgmtRow1 = ui.Panel([coverCropBtn, tillageBtn], ui.Panel.Layout.flow('horizo
 var mgmtRow2 = ui.Panel([toggleCoverLayerBtn, toggleTillageLayerBtn], ui.Panel.Layout.flow('horizontal'));
 uiPanel.add(mgmtRow1);
 uiPanel.add(mgmtRow2);
+
+/* Management window & threshold controls — placed in main panel for visibility */
+var mgmtWindowsPanel = ui.Panel({layout: ui.Panel.Layout.flow('vertical'),
+  style:{border:'1px solid #aaa', padding:'6px', margin:'4px 0', backgroundColor:'#f8fff8'}});
+mgmtWindowsPanel.add(ui.Label('Management Detection Windows & Thresholds', {fontWeight:'bold', fontSize:'12px', color:'#1f4a1f'}));
+
+// Fall window
+var fallStartBox  = ui.Textbox({value:'09-01', style:{width:'70px'}});
+var fallEndBox    = ui.Textbox({value:'11-30', style:{width:'70px'}});
+mgmtWindowsPanel.add(ui.Panel(
+  [ui.Label('Fall window (MM-DD):'), fallStartBox, ui.Label('→'), fallEndBox],
+  ui.Panel.Layout.flow('horizontal'), {margin:'2px 0'}));
+
+// Spring window
+var springStartBox = ui.Textbox({value:'02-01', style:{width:'70px'}});
+var springEndBox   = ui.Textbox({value:'05-15', style:{width:'70px'}});
+mgmtWindowsPanel.add(ui.Panel(
+  [ui.Label('Spring window (MM-DD):'), springStartBox, ui.Label('→'), springEndBox],
+  ui.Panel.Layout.flow('horizontal'), {margin:'2px 0'}));
+
+// Cover crop NDVI thresholds
+var ccFallNdviSlider   = ui.Slider({min:0.1, max:0.6, value:0.30, step:0.05, style:{width:'120px'}});
+var ccSpringNdviSlider = ui.Slider({min:0.1, max:0.6, value:0.35, step:0.05, style:{width:'120px'}});
+mgmtWindowsPanel.add(ui.Panel(
+  [ui.Label('Cover crop: fall NDVI thresh'), ccFallNdviSlider, ui.Label('spring NDVI thresh'), ccSpringNdviSlider],
+  ui.Panel.Layout.flow('horizontal'), {margin:'2px 0'}));
+
+// Tillage classification thresholds
+var tillReducedMarginSlider   = ui.Slider({min:0.05, max:0.40, value:0.15, step:0.05, style:{width:'110px'}});
+var tillIntensiveMarginSlider = ui.Slider({min:0.05, max:0.40, value:0.15, step:0.05, style:{width:'110px'}});
+mgmtWindowsPanel.add(ui.Panel(
+  [ui.Label('Reduced till margin (>)'), tillReducedMarginSlider,
+   ui.Label('Intensive till margin (>)'), tillIntensiveMarginSlider],
+  ui.Panel.Layout.flow('horizontal'), {margin:'2px 0'}));
+
+uiPanel.add(mgmtWindowsPanel);
 var statusLabel = ui.Label('Ready. Click “Run / Update”.', {color:'#666'});
 uiPanel.add(statusLabel);
 
@@ -245,7 +281,9 @@ function addIndices(img){
                .divide(nir.add(red.multiply(6)).subtract(blue.multiply(7.5)).add(1)).rename('EVI');
   var bsi  = sw1.add(red).subtract(nir.add(blue))
                .divide(sw1.add(red).add(nir.add(blue))).rename('BSI');
-  var ndti = sw1.subtract(sw2).divide(sw1.add(sw2)).rename('NDTI');
+  // NDTI = Normalized Difference Tillage Index (Biber et al.): (SWIR1 - NIR) / (SWIR1 + NIR)
+  // High NDTI (~0.2-0.5) = retained crop residue; Low NDTI (<0) = bare/tilled soil
+  var ndti = sw1.subtract(nir).divide(sw1.add(nir)).rename('NDTI');
   var ndmi = nir.subtract(sw1).divide(nir.add(sw1)).rename('NDMI');
   var brightness = img.select(['B2','B3','B4','B8','B11','B12']).reduce(ee.Reducer.mean()).rename('brightness');
   return img.addBands([ndvi,evi,bsi,ndti,ndmi,brightness]);
@@ -307,10 +345,15 @@ function validFrac(ws, geom, scale){
 
 
 
-var FALL_START = '09-01';
-var FALL_END = '11-30';
-var SPRING_START = '02-01';
-var SPRING_END = '05-15';
+// These are read at analysis-time from UI controls so the user can tune without re-running
+function FALL_START()   { return fallStartBox.getValue()   || '09-01'; }
+function FALL_END()     { return fallEndBox.getValue()     || '11-30'; }
+function SPRING_START() { return springStartBox.getValue() || '02-01'; }
+function SPRING_END()   { return springEndBox.getValue()   || '05-15'; }
+function CC_FALL_THRESH()   { return ccFallNdviSlider.getValue()   || 0.30; }
+function CC_SPRING_THRESH() { return ccSpringNdviSlider.getValue() || 0.35; }
+function TILL_REDUCED_MARGIN()   { return tillReducedMarginSlider.getValue()   || 0.15; }
+function TILL_INTENSIVE_MARGIN() { return tillIntensiveMarginSlider.getValue() || 0.15; }
 var COVER_SCORE_WEIGHTS = {freq: 0.45, fall: 0.20, spring: 0.20, sum: 0.15};
 var SAR_BLEND_WEIGHT = 0.20;
 
@@ -320,9 +363,9 @@ function yearList(){
 
 function annualMgmtForYear(year, includeSar, geom){
   var y = ee.Number(year).int();
-  var fall = seasonalComposite(y, FALL_START, FALL_END, ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask'], geom);
-  var spring = seasonalComposite(y, SPRING_START, SPRING_END, ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask'], geom);
-  var coverLikely = fall.select('NDVI').gt(0.30).or(spring.select('NDVI').gt(0.35)).rename('cover_crop_likely');
+  var fall = seasonalComposite(y, FALL_START(), FALL_END(), ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask'], geom);
+  var spring = seasonalComposite(y, SPRING_START(), SPRING_END(), ['NDVI','NDTI','NDMI','BSI','brightness','bare_mask'], geom);
+  var coverLikely = fall.select('NDVI').gt(CC_FALL_THRESH()).or(spring.select('NDVI').gt(CC_SPRING_THRESH())).rename('cover_crop_likely');
   var base = ee.Image.cat([
     coverLikely,
     fall.select('NDVI').rename('fall_ndvi'),
@@ -337,8 +380,8 @@ function annualMgmtForYear(year, includeSar, geom){
     return base;
   }
 
-  var start = ee.Date.parse('YYYY-MM-dd', y.format().cat('-').cat(SPRING_START));
-  var end = ee.Date.parse('YYYY-MM-dd', y.format().cat('-').cat(SPRING_END)).advance(1, 'day');
+  var start = ee.Date.parse('YYYY-MM-dd', y.format().cat('-').cat(SPRING_START()));
+  var end = ee.Date.parse('YYYY-MM-dd', y.format().cat('-').cat(SPRING_END())).advance(1, 'day');
   var s1 = ee.ImageCollection('COPERNICUS/S1_GRD')
     .filterBounds(geom)
     .filterDate(start, end)
@@ -891,18 +934,23 @@ function addAnalysisPanel(title, lines){
 }
 
 function buildProxiesForField(geom, onDone){
-  // Build proxy images scoped to a single field geometry, with simple caching
-  var geomStr = JSON.stringify(geom.bounds(ee.ErrorMargin(1)).getInfo());
-  if (state.lastMgmtGeomHash === geomStr && state.mgmtProxyImage && state.annualMgmtImage){
+  // Build proxy images scoped to a single field geometry.
+  // Cache key uses lastPid so switching fields invalidates; changing UI controls also invalidates
+  // by checking SAR toggle + window values in the key.
+  var cacheKey = String(state.lastPid) + '|' +
+    sarToggle.getValue() + '|' +
+    FALL_START() + FALL_END() + SPRING_START() + SPRING_END() + '|' +
+    CC_FALL_THRESH() + CC_SPRING_THRESH();
+  if (state.lastMgmtGeomHash === cacheKey && state.mgmtProxyImage && state.annualMgmtImage){
     onDone();
     return;
   }
-  statusLabel.setValue('Building management proxy (first time for this field, ~30s)…');
+  statusLabel.setValue('Building management proxy for this field (~20-40s)…');
   var years = ee.List(state.mgmtYears);
   var includeSar = sarToggle.getValue();
   state.mgmtProxyImage = buildMgmtProxyImage(years, includeSar, geom);
   state.annualMgmtImage = buildAnnualMgmtBandImage(years, includeSar, geom);
-  state.lastMgmtGeomHash = geomStr;
+  state.lastMgmtGeomHash = cacheKey;
   onDone();
 }
 
@@ -989,8 +1037,8 @@ function runTillageAnalysis(){
     var margin = reduced - intensive;
 
     var klass = 'uncertain';
-    if (margin > 0.15) { klass = 'likely_reduced'; }
-    else if (margin < -0.15) { klass = 'likely_intensive'; }
+    if (margin > TILL_REDUCED_MARGIN()) { klass = 'likely_reduced'; }
+    else if (margin < -TILL_INTENSIVE_MARGIN()) { klass = 'likely_intensive'; }
 
     var confidencePct = Math.min(99, Math.round((Math.abs(margin) / 0.5) * 100));
     var lines = [
@@ -1007,6 +1055,8 @@ function runTillageAnalysis(){
       lines.push('S1 SAR metrics not enabled.');
     }
 
+    lines.push('Thresholds: reduced_margin>' + proxyFmt(TILL_REDUCED_MARGIN(),2) +
+      ' | intensive_margin>' + proxyFmt(TILL_INTENSIVE_MARGIN(),2));
     addAnalysisPanel('Tillage Detection', lines);
     statusLabel.setValue('Tillage analysis complete.');
   });
