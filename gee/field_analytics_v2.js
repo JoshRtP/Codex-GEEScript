@@ -63,6 +63,21 @@ uiPanel.add(ui.Label('Field Analytics — On-Demand (S2 + S1 + MODIS + CDL) + Co
   fontWeight:'bold', fontSize:'16px'
 }));
 
+// Always-visible panel width control so the map area can be expanded quickly.
+// Drag left = wider panel / drag right = narrower panel = more map.
+var uiWidthSlider = ui.Slider({
+  min: 300, max: 1100, value: 800, step: 10,
+  style: {stretch: 'horizontal', margin: '0 4px'}
+});
+uiWidthSlider.onChange(function(v){ uiPanel.style().set('width', v + 'px'); });
+uiPanel.add(ui.Panel(
+  [ui.Label('↔ Panel width', {color:'#666', fontSize:'11px', margin:'4px 4px 0 0'}),
+   uiWidthSlider,
+   ui.Label('(drag to resize)', {color:'#999', fontSize:'10px', margin:'4px 0 0 2px'})],
+  ui.Panel.Layout.flow('horizontal'),
+  {margin:'0 0 2px 0', padding:'0'}
+));
+
 var startBox   = ui.Textbox({placeholder:'YYYY-MM-DD', value:'2024-09-01', style:{width:'140px'}});
 var endBox     = ui.Textbox({placeholder:'YYYY-MM-DD', value:'2025-06-30', style:{width:'140px'}});
 var cloudSlide = ui.Slider({min:0,max:100,value:90,step:1,style:{stretch:'horizontal'}});
@@ -182,9 +197,7 @@ var baseDimSlider   = ui.Slider({min:0,max:1,value:0.3,step:0.05,style:{width:'1
 uiPanel.add(ui.Panel([addOverlayBtn, clearOverlayBtn], ui.Panel.Layout.flow('horizontal')));
 advPanel.add(ui.Panel([ui.Label('Basemap dim'), baseDimSlider], ui.Panel.Layout.flow('horizontal')));
 
-// UI width control (Advanced)
-var uiWidthSlider = ui.Slider({min:600, max:1200, value:800, step:20, style:{width:'220px'}});
-uiWidthSlider.onChange(function(v){ uiPanel.style().set('width', v + 'px'); });
+// UI width also accessible here (mirrors the top slider)
 advPanel.add(ui.Panel([ui.Label('UI width (px)'), uiWidthSlider], ui.Panel.Layout.flow('horizontal')));
 
 /* Photo overlay controls */
