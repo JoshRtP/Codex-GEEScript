@@ -1,0 +1,63 @@
+project:
+  name: soc_dsm_project_v2
+  crs: EPSG:4326
+  target_depth_top_cm: 0
+  target_depth_bottom_cm: 30
+
+gee:
+  project_boundary_asset: projects/your-project/assets/project_boundary
+  soil_points_asset: projects/your-project/assets/soil_points_clean
+  feature_stack_asset: projects/your-project/assets/soc_feature_stack_v2
+  prediction_asset: projects/your-project/assets/soc_prediction_v2
+  field_boundaries_asset: projects/your-project/assets/field_boundaries
+  local_ssurgo_asset_root: projects/your-project/assets/ssurgo/
+
+features:
+  date_start: '2020-01-01'
+  date_end: '2024-12-31'
+  include_bare_soil: true
+  include_cdl_history: true
+  cdl_years: [2020, 2021, 2022, 2023, 2024]
+  include_soilgrids_hooks: true
+  include_ssurgo_hooks: true
+  crop_classes:
+    corn: [1]
+    soy: [5]
+    wheat: [22, 23, 24]
+    pasture: [176]
+    alfalfa: [36]
+
+model:
+  target: soc_stock_tCha
+  n_splits: 5
+  model_type: random_forest
+  n_estimators: 700
+  min_samples_leaf: 3
+  max_features: sqrt
+  random_state: 42
+
+spatial_blocks:
+  method: grid
+  grid_size_degrees: 0.25
+  cluster_count: 25
+
+crediting:
+  field_summary_column: mean_pred_p10
+  minimum_delta_tCha: 0.0
+  negative_deltas_floor_at_zero: true
+
+
+management_detection:
+  include_management_proxies: true
+  cover_crop_windows:
+    fall_start_mmdd: '-09-01'
+    fall_end_mmdd: '-12-15'
+    spring_start_mmdd: '-02-01'
+    spring_end_mmdd: '-05-15'
+  cover_crop_thresholds:
+    likely_min_score: 0.60
+    possible_min_score: 0.35
+  tillage_thresholds:
+    reduced_till_margin: 0.15
+    intensive_till_margin: -0.15
+  note: 'These are proxy outputs only. Use with reported practice evidence.'

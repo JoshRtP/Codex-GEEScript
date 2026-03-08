@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Outputs (data files — add specific tracked outputs manually)
+outputs/figures/*.png
+outputs/figures/*.jpg
+outputs/metrics/*.json
+outputs/rasters/*.tif
+outputs/rasters/*.tiff
+outputs/tables/*.csv
+# but keep .gitkeep files
+!outputs/**/.gitkeep
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets (keep the example, not real configs)
+configs/config.yaml
+# but keep the example
+!configs/config.example.yaml
+
+# Large binary files
+*.h5
+*.pkl
+*.joblib
+*.parquet

@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "field_id": "FIELD_001",
+        "farm_id": "FARM_A"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-104.99, 40.12],
+            [-104.98, 40.12],
+            [-104.98, 40.13],
+            [-104.99, 40.13],
+            [-104.99, 40.12]
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+sample_id,latitude,longitude,sample_date,depth_top_cm,depth_bottom_cm,soc_pct,bulk_density_g_cm3,rock_fragment_pct,land_use,project_id,lab_id
+S1,40.1234,-104.9876,2025-05-10,0,30,2.1,1.32,3,cropland,DEMO,LAB_A
+S2,40.1288,-104.9551,2025-05-11,0,30,1.7,1.28,1,cropland,DEMO,LAB_A
